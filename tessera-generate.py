@@ -85,7 +85,7 @@ class Dashboard(object):
                     row = self.create_empty_row(new_row_id)
                     section['items'].append( row )
 
-                for graph_spec in self.YAML_CONF['dashboard_graphs']:
+                for graph_spec in sorted(self.YAML_CONF['dashboard_graphs']):
                     # Graph
                     graph = self.create_graph( graph_spec, node, value, query_id ) 
                     # create cell in row with generated graph inside
