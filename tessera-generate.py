@@ -12,7 +12,7 @@ script_name = sys.argv[0]
 help = """Tessera Dashboard Generation script
  
 Usage:
-  %s --config-file=<file> --tessera-url=<url> [--create|--dashboard-id=<id>] [-]
+  %s --config-file=<file> --tessera-url=<url> [--create|--dashboard-id=<id>] [--layout=<layout>] --title=<title> [-]
  
 Options:
   -h --help                 Displays help
@@ -20,7 +20,8 @@ Options:
   -d --dashboard-id=<id>    Dashboard id to modify
   -f --config-file=<file>   YAML config file for dashboard templating
   -u --tessera-url=<url>    Tessera API URL
-
+  -l --layout=<layout>      Dashboard Layout (fixed, fluid) [default: fixed]
+  -y --title=<title>        Dashboard Title
 
 """ % (script_name)
 
@@ -36,6 +37,8 @@ class Dashboard(object):
         self.dashboard_spec = {}
         self.dashboard_id = options.get('--dashboard-id')
         self.tessera_server = self.options.get('--tessera-url')
+        self.title = self.options.get('--title')
+        self.layout = self.options.get('--layout', 'fixed')
         self.api = TesseraAPIClient(self.tessera_server)
         
         self.RANGE_SEPARATOR = '--'
@@ -65,7 +68,6 @@ class Dashboard(object):
         # Set dashboard's metadata
         self.metadata = self.create_dashboard_metadata(self.dashboard_id)
 
-
         # Create cells and graphs
         query_id = 0
         for node in self.nodes:
@@ -84,6 +86,7 @@ class Dashboard(object):
                     new_row_id = self.id_generator.next()
                     row = self.create_empty_row(new_row_id)
                     section['items'].append( row )
+
 
                 for graph_spec in sorted(self.YAML_CONF['dashboard_graphs']):
                     # Graph
@@ -132,7 +135,6 @@ class Dashboard(object):
 
 
     def create_dashboard_metadata(self, dashboard_id):
-        title = self.YAML_CONF['dashboard_options']['title']
         return {
                     'category': '',
                     'definition_href': '/api/dashboard/%s/definition' % dashboard_id, 
@@ -141,7 +143,7 @@ class Dashboard(object):
                     'href': '/api/dashboard/%s' % dashboard_id, 
                     'id': dashboard_id, 
                     'tags': [], 
-                    'title': title, 
+                    'title': self.title,
                     'view_href': '/dashboards/1/hop',
                     'imported_from' : '',
                 }
@@ -160,7 +162,7 @@ class Dashboard(object):
         return {    
                     'title' : title,
                     'item_id': self.id_generator.next(),
-                    'layout': 'fixed', 
+                    'layout': self.layout, 
                     'item_type': 'section', 
                     'items': []
             }
@@ -175,12 +177,13 @@ class Dashboard(object):
         return {
                "item_id": self.id_generator.next(),
                 "span": cellspan,
-                "item_type": "cell", 
+                "item_type": "cell",
                 "items": [graph_spec]
             }
 
 
     def create_graph(self, graph_spec, node, node_value, query_id):
+
         # default
         graph = {
                     "item_id": self.id_generator.next(), 
