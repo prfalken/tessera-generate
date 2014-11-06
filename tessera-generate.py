@@ -7,12 +7,14 @@ import yaml
 import sys
 import re
 
+DEBUG = False
+
 script_name = sys.argv[0]
 
 help = """Tessera Dashboard Generation script
  
 Usage:
-  %s --config-file=<file> --tessera-url=<url> [--create|--dashboard-id=<id>] [--layout=<layout>] --title=<title> [-]
+  %s --config-file=<file> --tessera-url=<url> [--create|--dashboard-id=<id>] [--title=<title>] [--layout=<layout>] [--category=<category>] [--tags=tag1,tag2,...] [-]
  
 Options:
   -h --help                 Displays help
@@ -20,75 +22,110 @@ Options:
   -d --dashboard-id=<id>    Dashboard id to modify
   -f --config-file=<file>   YAML config file for dashboard templating
   -u --tessera-url=<url>    Tessera API URL
-  -l --layout=<layout>      Dashboard Layout (fixed, fluid) [default: fixed]
-  -y --title=<title>        Dashboard Title
+  -l --layout=<layout>      Dashboard Layout (fixed, fluid)
+  -t --title=<title>        Dashboard Title
+  -c --category=<category>  Dashboard Category
+  -g --tags=<tag1,tag2,...> Dashboard Tags
 
 """ % (script_name)
 
-OPTIONS = docopt(help)
-#print OPTIONS
+
+class Configuration(object):
+    def __init__(self, command_line_options):
+
+        config_file = command_line_options.get('--config-file')
+
+        self.RANGE_SEPARATOR = '--'
+        self.RANGE_RE = re.compile(r'(.*-)(\d+)%s(\d+)(.*)' % self.RANGE_SEPARATOR)
+        self.yaml_conf = yaml.load(open(config_file).read())
+        self.command_line_options = command_line_options
+        self.dashboard_metadata = self._set_dashboard_metadata()
+        self.dashboard_graphs = self.yaml_conf['dashboard_graphs']
+
+        if len(self.dashboard_graphs) > 1:
+            self.multiple_graphs = True
+
+        self.nodes = {}
+        if self.yaml_conf.get('nodes'):
+            self.nodes = self.yaml_conf['nodes']
+            for node in self.nodes:
+                self.nodes[node] = self._develop_range(self.nodes[node])
+        elif command_line_options.get('-'):
+            for line in sys.stdin.readlines():
+                self.nodes['node'] = [ x.strip() for x in line.split(' ') ]
+        else:
+            raise Exception('No nodes in config file or from stdin')
+
+    
+    def _set_dashboard_metadata(self):
+        metadata = {
+                'tessera-url'  : 'http://127.0.0.1:5000',
+                'dashboard-id' : None,
+                'layout'       : 'fixed', 
+                'title'        : 'New Dashboard', 
+                'category'     : 'New Category', 
+                'tags'         : [],
+            }
+        
+        metadata.update(self.yaml_conf['dashboard_metadata'])
+        
+        for option in metadata:
+            dashed_option = '--' + option
+            if self.command_line_options.get(dashed_option):
+                metadata[option] = self.command_line_options["--" + option]
+
+        return metadata
+
+
+
+    def to_json(self):
+        return json.dumps({
+                'dashboard_metadata' : self.dashboard_metadata,
+                'dashboard_graphs'  : self.dashboard_graphs,
+                'nodes'             : self.nodes
+            })
+
+
+
 
 
 class Dashboard(object):
 
-    def __init__(self, options):
-        
-        self.options = options
+    def __init__(self, config):
+        self.config = config
         self.dashboard_spec = {}
-        self.dashboard_id = options.get('--dashboard-id')
-        self.tessera_server = self.options.get('--tessera-url')
-        self.title = self.options.get('--title')
-        self.layout = self.options.get('--layout', 'fixed')
-        self.api = TesseraAPIClient(self.tessera_server)
-        
-        self.RANGE_SEPARATOR = '--'
-        self.RANGE_RE = re.compile(r'(.*-)(\d+)%s(\d+)(.*)' % self.RANGE_SEPARATOR)
 
-        self.YAML_CONF = self._get_yaml_conf()
-
+        self.api = TesseraAPIClient(config.dashboard_metadata['tessera-url'])
         self.id_generator = self._generate_item_id()
 
-        self.multiple_graphs = False
-        if len(self.YAML_CONF['dashboard_graphs']) > 1:
-            self.multiple_graphs = True
-
-
-        self.nodes = {}
-        if self.YAML_CONF.get('nodes'):
-            self.nodes = self.YAML_CONF['nodes']
-            for node in self.nodes:
-                self.nodes[node] = self._develop_range(self.nodes[node])
-        elif options.get('-'):
-            for line in sys.stdin.readlines():
-                self.nodes['node'] = [ x.strip() for x in line.split(' ') ]
-
         # Create dashboard
-        self.dashboard_spec = self.create_empty_dashboard(self.dashboard_id)
+        dash_id = config.dashboard_metadata['dashboard-id']
+        self.dashboard_spec = self.create_empty_dashboard(dash_id)
 
         # Set dashboard's metadata
-        self.metadata = self.create_dashboard_metadata(self.dashboard_id)
+        self.metadata = self.create_dashboard_metadata(dash_id)
 
         # Create cells and graphs
         query_id = 0
-        for node in self.nodes:
+        for node in config.nodes:
 
-            nodes_values = self.nodes[node]
+            nodes_values = config.nodes[node]
             for value in nodes_values:
                 # Create section
-                if self.multiple_graphs:
+                if config.multiple_graphs:
                     section = self.create_empty_section(value)
                 else:
                     section = self.create_empty_section()
                 self.dashboard_spec['items'].append( section )
 
                 # Add new row  only if there is more than 1 graph per node
-                if self.multiple_graphs or query_id == 0:
+                if config.multiple_graphs or query_id == 0:
                     new_row_id = self.id_generator.next()
                     row = self.create_empty_row(new_row_id)
                     section['items'].append( row )
 
 
-                for graph_spec in sorted(self.YAML_CONF['dashboard_graphs']):
+                for graph_spec in sorted(config.dashboard_graphs):
                     # Graph
                     graph = self.create_graph( graph_spec, node, value, query_id ) 
                     # create cell in row with generated graph inside
@@ -96,14 +133,6 @@ class Dashboard(object):
                     row['items'].append( cell )
 
                     query_id+=1
-
-
-    def _get_yaml_conf(self):
-        config_file = self.options.get('--config-file')
-        yaml_conf = None
-        if config_file:        
-            yaml_conf = yaml.load(open(config_file).read())
-        return yaml_conf
 
 
     def _develop_range(self, o):
@@ -136,14 +165,14 @@ class Dashboard(object):
 
     def create_dashboard_metadata(self, dashboard_id):
         return {
-                    'category': '',
+                    'category': self.config.dashboard_metadata['category'],
                     'definition_href': '/api/dashboard/%s/definition' % dashboard_id, 
                     'description': '', 
                     'summary': '',
                     'href': '/api/dashboard/%s' % dashboard_id, 
                     'id': dashboard_id, 
-                    'tags': [], 
-                    'title': self.title,
+                    'tags': self.config.dashboard_metadata['tags'], 
+                    'title': self.config.dashboard_metadata['title'],
                     'view_href': '/dashboards/1/hop',
                     'imported_from' : '',
                 }
@@ -162,7 +191,7 @@ class Dashboard(object):
         return {    
                     'title' : title,
                     'item_id': self.id_generator.next(),
-                    'layout': self.layout, 
+                    'layout': self.config.dashboard_metadata['layout'], 
                     'item_type': 'section', 
                     'items': []
             }
@@ -173,7 +202,7 @@ class Dashboard(object):
 
 
     def create_cell(self, graph_spec):
-        cellspan = self.YAML_CONF.get('dashboard_options').get('cellspan', 3)
+        cellspan = self.config.dashboard_metadata.get('cellspan', 3)
         return {
                "item_id": self.id_generator.next(),
                 "span": cellspan,
@@ -183,7 +212,6 @@ class Dashboard(object):
 
 
     def create_graph(self, graph_spec, node, node_value, query_id):
-
         # default
         graph = {
                     "item_id": self.id_generator.next(), 
@@ -191,9 +219,9 @@ class Dashboard(object):
             }
 
         # updated graph with config file
-        graph.update(self.YAML_CONF['dashboard_graphs'][graph_spec])
+        graph.update(self.config.dashboard_graphs[graph_spec])
 
-        if not self.multiple_graphs:
+        if not self.config.multiple_graphs:
             graph['title'] = node_value
 
         # Move the query field to the right place in the main, and specify it in this graph 
@@ -208,17 +236,18 @@ class Dashboard(object):
 
     def commit(self):
         
-        api = TesseraAPIClient(self.tessera_server)
+        api = TesseraAPIClient(self.config.dashboard_metadata['tessera-url'])
         api.set_data(self.dashboard_spec)
         api.set_metadata(self.metadata)
 
-        if self.options.get('--create'):
+        if self.config.dashboard_metadata.get('dashboard-id'):
+            api.update_dashboard_metadata(self.config.dashboard_metadata['dashboard-id'])
+        else:
             new_dashboard_ref = api.create_dashboard()
-            self.dashboard_id = new_dashboard_ref['dashboard_href'].replace('/api/dashboard/', '')
-        elif self.options.get('--dashboard-id'):
-            api.update_dashboard_metadata(self.dashboard_id)
+            print self.config.dashboard_metadata
+            self.config.dashboard_metadata['dashboard-id'] = new_dashboard_ref['dashboard_href'].replace('/api/dashboard/', '')
 
-        api.update_dashboard_definition(self.dashboard_id)
+        api.update_dashboard_definition(self.config.dashboard_metadata['dashboard-id'])
 
 
 
@@ -242,20 +271,35 @@ class TesseraAPIClient(object):
     def create_dashboard(self):
         create_url = self.dashboard_url + '/'
         headers = {'Content-type': 'application/json', 'Accept': 'text/plain'}
+        if DEBUG:
+            print 'Creating dashboard with metadata ' + self.metadata
+            return
+
         return requests.post(create_url, self.metadata, headers=headers).json()
 
     def update_dashboard_metadata(self, dashboard_id):
+        if DEBUG:
+            print "Updating dashboard with metadata : " + self.metadata
+            return
         metadata_url = self.dashboard_url + '/%s' % dashboard_id
         return requests.put(metadata_url, self.metadata)
 
     def update_dashboard_definition(self, dashboard_id):
         definition_url = self.dashboard_url + '/%s/definition' % dashboard_id
+        if DEBUG:
+            # print 'updating dashboard with data : \n' + self.data
+            return
         requests.put(definition_url, self.data)
 
 
 
 def main():
-    dashboard = Dashboard(OPTIONS)
+    OPTIONS = docopt(help)
+    # print OPTIONS
+    # sys.exit()
+
+    conf = Configuration(OPTIONS)
+    dashboard = Dashboard(conf)
     dashboard.commit()
 
 if __name__ == '__main__':
