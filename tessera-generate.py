@@ -41,6 +41,7 @@ class Configuration(object):
         self.command_line_options = command_line_options
         self.dashboard_metadata = self._set_dashboard_metadata()
         self.dashboard_graphs = self.yaml_conf['dashboard_graphs']
+        self.multiple_graphs = None
 
         if len(self.dashboard_graphs) > 1:
             self.multiple_graphs = True
@@ -202,10 +203,9 @@ class Dashboard(object):
 
 
     def create_cell(self, graph_spec):
-        cellspan = self.config.dashboard_metadata.get('cellspan', 3)
         return {
                "item_id": self.id_generator.next(),
-                "span": cellspan,
+                "span": graph_spec.get('cellspan', 3),
                 "item_type": "cell",
                 "items": [graph_spec]
             }
@@ -229,7 +229,6 @@ class Dashboard(object):
         query = Template(query)
         self.dashboard_spec['queries'][query_id] = { 'name' : str(query_id), 'targets': [query.render(**{ node: node_value })] }
         graph['query'] = str(query_id)
-
         return graph
 
 
