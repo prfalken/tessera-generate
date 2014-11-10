@@ -44,7 +44,7 @@ Example yaml configuration for --config-file
 	        cellspan: 2
 	        options:
 	            palette: brewerdiv4
-	        query: "sortByName(aliasByMetric(collectd.{{node}}_dailymotion_com.load.load.*))"
+	        query: "sortByName(aliasByMetric(collectd.{{node}}.load.load.*))"
 
 	    graph-2:
 	        title: Memory
@@ -52,8 +52,8 @@ Example yaml configuration for --config-file
 	        item_type: stacked_area_chart
 	        query: >
 	            group(
-	                alias(collectd.{{node}}_dailymotion_com.memory.memory.used.value,"used"),
-	                alias(collectd.{{node}}_dailymotion_com.memory.memory.cached.value,"cached"),
-	                alias(collectd.{{node}}_dailymotion_com.memory.memory.buffered.value,"buffered"),
-	                alias(collectd.{{node}}_dailymotion_com.memory.memory.free.value,"free")
+	                alias(collectd.{{node}}.memory.memory.used.value,"used"),
+	                alias(collectd.{{node}}.memory.memory.cached.value,"cached"),
+	                alias(collectd.{{node}}.memory.memory.buffered.value,"buffered"),
+	                alias(collectd.{{node}}.memory.memory.free.value,"free")
 	            )
