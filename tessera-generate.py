@@ -6,8 +6,9 @@ from jinja2 import Template
 import yaml
 import sys
 import re
+import os
 
-DEBUG = False
+DEBUG = os.environ.get('DEBUG')
 
 script_name = sys.argv[0]
 
@@ -69,13 +70,21 @@ dashboard_graphs:
 
 class Configuration(object):
     def __init__(self, command_line_options):
+        """Load dashboard configuration from command line and YAML config file
 
-        config_file = command_line_options.get('--config-file')
+        Attributes:
+            command_line_options(dict): docopt dictionary from command line options
+            yaml_conf(dict): from specified YAML config file
+            nodes (dict): the list of nodes to loop over
+            dashboard_metadata (dict): Tessera Dashboard Metadata (along with generate options)
+            dashboard_graphs (dict): Tessera description of all items in the dashboard
+            multiple_graphs (bool): True if each node will show more than one graph.
 
-        self.RANGE_SEPARATOR = '--'
-        self.RANGE_RE = re.compile(r'(.*-)(\d+)%s(\d+)(.*)' % self.RANGE_SEPARATOR)
-        self.yaml_conf = yaml.load(open(config_file).read())
+        """
         self.command_line_options = command_line_options
+        config_file = command_line_options.get('--config-file')
+        self.yaml_conf = self._load_yaml_conf(config_file)
+        self.nodes = self._expand_nodes()
         self.dashboard_metadata = self._set_dashboard_metadata()
         self.dashboard_graphs = self.yaml_conf['dashboard_graphs']
         self.multiple_graphs = None
@@ -83,19 +92,43 @@ class Configuration(object):
         if len(self.dashboard_graphs) > 1:
             self.multiple_graphs = True
 
-        self.nodes = {}
+
+
+    def _load_yaml_conf(self, yaml_file):
+        """ Loads a yaml conf and displays yaml errors
+        """
+        try:
+            conf = yaml.load(open(yaml_file).read())
+        except yaml.parser.ParserError, e:
+            print "Could not parse YAML conf with error : \n" , e
+            sys.exit()
+
+        return conf
+
+    
+    def _expand_nodes(self):
+        """ Expands a list of nodes, wether they come from the command line
+            or from the user's YAML configuration file
+        """
+        nodes = {}
         if self.yaml_conf.get('nodes'):
-            self.nodes = self.yaml_conf['nodes']
-            for node in self.nodes:
-                self.nodes[node] = self._develop_range(self.nodes[node])
-        elif command_line_options.get('-'):
+            nodes = self.yaml_conf['nodes']
+            for node in nodes:
+                nodes[node] = self._develop_range(nodes[node])
+        elif self.command_line_options.get('-'):
             for line in sys.stdin.readlines():
-                self.nodes['node'] = [ x.strip() for x in line.split(' ') ]
+                nodes['node'] = [ x.strip() for x in line.split(' ') ]
         else:
             raise Exception('No nodes in config file or from stdin')
 
+        return nodes
+
     
     def _set_dashboard_metadata(self):
+        """ sets default metadata for the dashboard and overrides
+            with YAML conf file options, then overrides with
+            command line options
+        """
         metadata = {
                 'tessera-url'  : 'http://127.0.0.1:5000',
                 'dashboard-id' : None,
@@ -115,8 +148,10 @@ class Configuration(object):
         return metadata
 
 
-
     def to_json(self):
+        """ Returns:
+                dashboard's data to json.
+        """
         return json.dumps({
                 'dashboard_metadata' : self.dashboard_metadata,
                 'dashboard_graphs'  : self.dashboard_graphs,
@@ -128,17 +163,26 @@ class Configuration(object):
 
 
 class Dashboard(object):
+    """ Create a Tessera dashboard metadata and description.
 
+        Attributes:
+            config (Configuration object): main config from default, yaml, and command line.
+            dashboard_description (dict): Tessera dashboard description
+            api (TesseraAPIClient object): Tessera API Client used to send the dashboard.
+            id_generator (generator): Used to define a unique id for each item (section, row, cell, item)
+            metadata (dict): Tessera dashboard metadata
+            
+
+    """
     def __init__(self, config):
         self.config = config
-        self.dashboard_spec = {}
 
         self.api = TesseraAPIClient(config.dashboard_metadata['tessera-url'])
         self.id_generator = self._generate_item_id()
 
         # Create dashboard
         dash_id = config.dashboard_metadata['dashboard-id']
-        self.dashboard_spec = self.create_empty_dashboard(dash_id)
+        self.dashboard_description = self.create_empty_dashboard(dash_id)
 
         # Set dashboard's metadata
         self.metadata = self.create_dashboard_metadata(dash_id)
@@ -154,7 +198,7 @@ class Dashboard(object):
                     section = self.create_empty_section(value)
                 else:
                     section = self.create_empty_section()
-                self.dashboard_spec['items'].append( section )
+                self.dashboard_description['items'].append( section )
 
                 # Add new row  only if there is more than 1 graph per node
                 if config.multiple_graphs or query_id == 0:
@@ -176,11 +220,13 @@ class Dashboard(object):
     def _develop_range(self, o):
         """Return the list of objects corresponding to a range.
 
-        Return the list of objects (hosts and/or services) as listed in
-        range form (e.g. return ['host-01/HTTP', 'host-02/HTTP',
-        'host-03/HTTP'] if o == 'host-01--03/HTTP').
+        Return the list of objects as listed in range form 
+        (e.g. return ['host-01', 'host-02', 'host-03'] if o == 'host-01--03').
         """
-        m = self.RANGE_RE.search(o)
+        range_separator = '--'
+        range_re = re.compile(r'(.*-)(\d+)%s(\d+)(.*)' % range_separator)
+
+        m = range_re.search(o)
         if m:
             prefix = m.group(1)
             start = int(m.group(2))
@@ -202,6 +248,9 @@ class Dashboard(object):
 
 
     def create_dashboard_metadata(self, dashboard_id):
+        """ Returns:
+                a Tessera metadata dictionary
+        """
         return {
                     'category': self.config.dashboard_metadata['category'],
                     'definition_href': '/api/dashboard/%s/definition' % dashboard_id, 
@@ -216,6 +265,9 @@ class Dashboard(object):
                 }
 
     def create_empty_dashboard(self, dashboard_id):
+        """ Returns:
+                a Tessera empty dashboard description
+        """
         return {    
                     'queries': {},
                     'item_id': 'd0',
@@ -226,6 +278,9 @@ class Dashboard(object):
                 } 
 
     def create_empty_section(self, title=''):
+        """ Returns:
+                a Tessera empty section with values set from configuration.
+        """
         return {    
                     'title' : title,
                     'item_id': self.id_generator.next(),
@@ -236,10 +291,16 @@ class Dashboard(object):
 
 
     def create_empty_row(self, row_id):
+        """ Returns:
+                a Tessera empty row.
+        """
         return {  "item_id": row_id, "item_type": "row", "items": [] }
 
 
     def create_cell(self, graph_spec):
+        """ Returns:
+                a Tessera empty cell with values set from configuration.
+        """
         return {
                "item_id": self.id_generator.next(),
                 "span": graph_spec.get('cellspan', 3),
@@ -249,7 +310,10 @@ class Dashboard(object):
 
 
     def create_graph(self, graph_spec, node, node_value, query_id):
-        # default
+        """ Extracts the "queries" section of a dashboard description and create an item description
+        Returns: 
+                a Tessera item (not only a graph, depends on the "item_type" property)
+        """
         graph = {
                     "item_id": self.id_generator.next(), 
                     "item_type": 'standard_time_series', 
@@ -264,16 +328,19 @@ class Dashboard(object):
         # Move the query field to the right place in the main, and specify it in this graph 
         query =  graph['query']
         query = Template(query)
-        self.dashboard_spec['queries'][query_id] = { 'name' : str(query_id), 'targets': [query.render(**{ node: node_value })] }
+        self.dashboard_description['queries'][query_id] = { 'name' : str(query_id), 'targets': [query.render(**{ node: node_value })] }
         graph['query'] = str(query_id)
         return graph
 
 
 
     def commit(self):
-        
+        """ Prepares the data and metadata and send them to the Tessera API Client
+            Creates a new Dashboard if asked in the config/commandline, or updates 
+            an existing one. 
+        """
         api = TesseraAPIClient(self.config.dashboard_metadata['tessera-url'])
-        api.set_data(self.dashboard_spec)
+        api.set_data(self.dashboard_description)
         api.set_metadata(self.metadata)
 
         if self.config.dashboard_metadata.get('dashboard-id'):
@@ -331,8 +398,6 @@ class TesseraAPIClient(object):
 
 def main():
     OPTIONS = docopt(help)
-    # print OPTIONS
-    # sys.exit()
 
     conf = Configuration(OPTIONS)
     dashboard = Dashboard(conf)
