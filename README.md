@@ -21,7 +21,7 @@ Tessera Dashboard generation utility for the command line
 
 Loop over nodes
 ----------------------------
-    echo web-{01..80} | ./tessera-generate.py --create --config-file=web-farm.yaml --tessera=url=http://mytessera.example.com
+    echo web-{01..80} | ./tessera-generate.py --create --config-file=web-farm.yaml --tessera-url=http://mytessera.example.com
 
 
 Example yaml configuration for --config-file
