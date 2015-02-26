@@ -94,6 +94,29 @@ class Configuration(object):
 
 
 
+    def _develop_range(self, o):
+        """Return the list of objects corresponding to a range.
+
+        Return the list of objects as listed in range form 
+        (e.g. return ['host-01', 'host-02', 'host-03'] if o == 'host-01--03').
+        """
+        range_separator = '--'
+        range_re = re.compile(r'(.*-)(\d+)%s(\d+)(.*)' % range_separator)
+
+        m = range_re.search(o)
+        if m:
+            prefix = m.group(1)
+            start = int(m.group(2))
+            end = int(m.group(3))
+            suffix = m.group(4)
+            format_ = "%%s%%0%dd%%s" % len(m.group(2))
+            return [format_ % (prefix, i, suffix)
+                    for i in range(start, end + 1)]
+        else:
+            return [o]
+
+
+
     def _load_yaml_conf(self, yaml_file):
         """ Loads a yaml conf and displays yaml errors
         """
@@ -215,28 +238,6 @@ class Dashboard(object):
                     row['items'].append( cell )
 
                     query_id+=1
-
-
-    def _develop_range(self, o):
-        """Return the list of objects corresponding to a range.
-
-        Return the list of objects as listed in range form 
-        (e.g. return ['host-01', 'host-02', 'host-03'] if o == 'host-01--03').
-        """
-        range_separator = '--'
-        range_re = re.compile(r'(.*-)(\d+)%s(\d+)(.*)' % range_separator)
-
-        m = range_re.search(o)
-        if m:
-            prefix = m.group(1)
-            start = int(m.group(2))
-            end = int(m.group(3))
-            suffix = m.group(4)
-            format_ = "%%s%%0%dd%%s" % len(m.group(2))
-            return [format_ % (prefix, i, suffix)
-                    for i in range(start, end + 1)]
-        else:
-            return [o]
 
 
     ## generates IDs for newly created items
