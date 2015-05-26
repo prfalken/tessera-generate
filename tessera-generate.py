@@ -136,8 +136,11 @@ class Configuration(object):
         nodes = {}
         if self.yaml_conf.get('nodes'):
             nodes = self.yaml_conf['nodes']
-            for node in nodes:
-                nodes[node] = self._develop_range(nodes[node])
+            if type(nodes) is dict:
+                pass
+            else:
+                for node in nodes:
+                    nodes[node] = self._develop_range(nodes[node])
         elif self.command_line_options.get('-'):
             for line in sys.stdin.readlines():
                 nodes['node'] = [ x.strip() for x in line.split(' ') ]
@@ -214,7 +217,14 @@ class Dashboard(object):
         query_id = 0
         for node in config.nodes:
 
-            nodes_values = config.nodes[node]
+            if type(config.nodes[node]) is dict:
+                nodes_values = config.nodes[node].keys()
+                nodes_values = sorted(nodes_values)
+                extra_query_params = {}
+            else:
+                nodes_values = config.nodes[node]
+                extra_query_params = None
+
             for value in nodes_values:
                 # Create section
                 if config.multiple_graphs:
@@ -229,10 +239,20 @@ class Dashboard(object):
                     row = self.create_empty_row(new_row_id)
                     section['items'].append( row )
 
+                if extra_query_params is not None:
+                    extra_query_params = config.nodes[node][value]
 
-                for graph_spec in sorted(config.dashboard_graphs):
+                graphs = sorted(config.dashboard_graphs)
+
+                for graph_spec in graphs:
                     # Graph
-                    graph = self.create_graph( graph_spec, node, value, query_id ) 
+                    graph = self.create_graph(
+                        graph_spec=graph_spec,
+                        node=node,
+                        node_value=value,
+                        query_id=query_id,
+                        extra_query_params=extra_query_params
+                    )
                     # create cell in row with generated graph inside
                     cell = self.create_cell(graph)
                     row['items'].append( cell )
@@ -310,7 +330,14 @@ class Dashboard(object):
             }
 
 
-    def create_graph(self, graph_spec, node, node_value, query_id):
+    def create_graph(
+            self,
+            graph_spec,
+            node,
+            node_value,
+            query_id,
+            extra_query_params=None
+        ):
         """ Extracts the "queries" section of a dashboard description and create an item description
         Returns: 
                 a Tessera item (not only a graph, depends on the "item_type" property)
@@ -323,16 +350,30 @@ class Dashboard(object):
         # updated graph with config file
         graph.update(self.config.dashboard_graphs[graph_spec])
 
-        if not self.config.multiple_graphs:
+        if 'title' in graph and extra_query_params is not None:
+            title = Template(graph['title'])
+            graph['title'] = title.render(**extra_query_params)
+
+        if not self.config.multiple_graphs and 'title' not in graph:
             graph['title'] = node_value
+
+        query_params = { node: node_value }
+
+        if type(extra_query_params) is dict:
+            query_params.update(extra_query_params)
 
         # Move the query field to the right place in the main, and specify it in this graph 
         query =  graph['query']
         query = Template(query)
-        self.dashboard_description['queries'][query_id] = { 'name' : str(query_id), 'targets': [query.render(**{ node: node_value })] }
+        self.dashboard_description['queries'][query_id] = {
+            'name' : str(query_id),
+            'targets': [
+                query.render(**query_params)
+            ]
+        }
         graph['query'] = str(query_id)
-        return graph
 
+        return graph
 
 
     def commit(self):
@@ -348,7 +389,6 @@ class Dashboard(object):
             api.update_dashboard_metadata(self.config.dashboard_metadata['dashboard-id'])
         else:
             new_dashboard_ref = api.create_dashboard()
-            print self.config.dashboard_metadata
             self.config.dashboard_metadata['dashboard-id'] = new_dashboard_ref['dashboard_href'].replace('/api/dashboard/', '')
 
         api.update_dashboard_definition(self.config.dashboard_metadata['dashboard-id'])
@@ -364,7 +404,7 @@ class TesseraAPIClient(object):
         self.data = None
 
     def set_data(self, data):
-        self.data = json.dumps(data)        
+        self.data = json.dumps(data)
 
     def set_metadata(self, data):
         self.metadata = json.dumps(data)
